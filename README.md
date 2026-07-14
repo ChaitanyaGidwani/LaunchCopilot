@@ -1,6 +1,8 @@
 # 🚀 LaunchCopilot
 
-Deploy Link : https://2026-07-ethos-engineers.hackonvibe.com
+Preferred Deploy Link : https://2026-07-ethos-engineers.vercel.app
+
+Organizer's Deploy Link : https://2026-07-ethos-engineers.hackonvibe.com
 
 Demo Video Link : https://youtu.be/Ye8fpxNaucc
 
