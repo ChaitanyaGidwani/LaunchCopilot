@@ -12,8 +12,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Update log file
-        run: echo "Backup run: $(date -u)" >> streak-log.md
-
+        run: |
+          echo "Backup run: $(date -u)" >> streak-log.md
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
