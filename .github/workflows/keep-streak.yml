@@ -1,0 +1,23 @@
+name: Daily Backup Commit
+
+on:
+  schedule:
+    - cron: '30 17 * * *'  # 11 PM IST daily
+  workflow_dispatch:
+
+jobs:
+  auto-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update log file
+        run: echo "Backup run: $(date -u)" >> streak-log.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add streak-log.md
+          git commit -m "chore: daily backup commit" || echo "Nothing to commit"
+          git push
