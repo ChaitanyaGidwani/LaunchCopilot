@@ -9,15 +9,25 @@ export const maxDuration = 60;
 // Publishes every queued post whose scheduled time has arrived.
 async function runDuePosts() {
   const db = supabase();
+  // APPROVAL GATE: autopilot only ever publishes posts a human has approved.
+  // Unapproved posts stay queued indefinitely — no surprise posting, which is
+  // also what keeps accounts out of spam/ban territory.
   const { data: due } = await db
     .from("scheduled_posts")
     .select("*")
     .eq("status", "queued")
+    .eq("approved", true)
     .lte("scheduled_for", new Date().toISOString())
     .limit(10);
 
   const results = [];
+  const seenChannels = new Set();
   for (const post of due ?? []) {
+    // RATE LIMIT: at most one post per channel per run, and a courtesy gap
+    // between calls so we never burst a platform's API.
+    if (seenChannels.has(post.channel)) continue;
+    seenChannels.add(post.channel);
+    if (results.length > 0) await new Promise((r) => setTimeout(r, 2000));
     const [{ data: app }, { data: assetRows }] = await Promise.all([
       db.from("apps").select("*").eq("id", post.app_id).single(),
       db.from("assets").select("*").eq("app_id", post.app_id),

@@ -16,3 +16,11 @@ create table if not exists scheduled_posts (
 create index if not exists idx_sched_due on scheduled_posts(status, scheduled_for);
 
 alter table scheduled_posts enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- APPROVAL GATE (run this if you already created scheduled_posts earlier).
+-- Nothing publishes itself until a human has approved that specific post, and
+-- we remember who/when so the audit trail is visible in the UI.
+-- ---------------------------------------------------------------------------
+alter table scheduled_posts add column if not exists approved boolean not null default false;
+alter table scheduled_posts add column if not exists approved_at timestamptz;

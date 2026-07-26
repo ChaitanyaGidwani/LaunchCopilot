@@ -16,13 +16,11 @@ function StatusBadge({ post }) {
   if (post.status === "published") return <span className="badge ok">✓ live</span>;
   if (post.status === "failed")
     return <span className="badge err" title={post.error}>failed</span>;
+  if (!post.approved) return <span className="badge">needs review</span>;
   const due = new Date(post.scheduled_for) <= new Date();
-  return (
-    <span className={`badge ${due ? "busy" : ""}`} suppressHydrationWarning>
-      {due ? "due now" : "queued"}
-    </span>
-  );
+  return <span className={`badge ${due ? "busy" : "ok"}`}>{due ? "publishing next run" : "approved"}</span>;
 }
+
 
 // THE AUTOPILOT CONSOLE — posts that publish themselves. Queue state lives in
 // Dashboard so per-card "Publish live" buttons stay in sync with this table.
@@ -66,6 +64,25 @@ export default function Autopilot({ app, plan, publishable, linkedinConnectable,
       notify("err", e.message);
     } finally {
       setBuilding(false);
+    }
+  }
+
+  // Human-in-the-loop: nothing publishes until the dev approves that post.
+  async function setApproved(post, approved) {
+    try {
+      const res = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ postId: post.id, approved }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't update approval");
+      setQueue((q) => q.map((p) => (p.id === data.post.id ? data.post : p)));
+      notify("ok", approved
+        ? `${LABELS[post.channel] ?? post.channel} approved — autopilot will publish it.`
+        : `${LABELS[post.channel] ?? post.channel} put back on hold.`);
+    } catch (e) {
+      notify("err", e.message);
     }
   }
 
@@ -134,6 +151,15 @@ export default function Autopilot({ app, plan, publishable, linkedinConnectable,
                   })}
                 </span>
                 <StatusBadge post={post} />
+                {post.status === "queued" && (
+                  <button
+                    className="copy-btn"
+                    onClick={() => setApproved(post, !post.approved)}
+                    title={post.approved ? "Put this post back on hold" : "Approve this post for publishing"}
+                  >
+                    {post.approved ? "Hold" : "✓ Approve"}
+                  </button>
+                )}
                 {post.result_url && (
                   <a
                     href={post.result_url}

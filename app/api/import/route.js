@@ -6,6 +6,18 @@ import { getAccount, getAppCount, FREE_APP_LIMIT } from "@/lib/account";
 
 export const maxDuration = 60;
 
+// Store listings are HTML-escaped; unescape before we hand text to the model.
+function decodeEntities(str = "") {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
+}
+
 // ONE-LINK INTAKE: paste an App Store / Play Store URL, get a ready app.
 // Apple: official iTunes Lookup API. Google Play: og: meta tags.
 async function fetchStoreListing(storeUrl) {
@@ -28,25 +40,79 @@ async function fetchStoreListing(storeUrl) {
   }
 
   if (url.hostname.includes("play.google.com")) {
-    const res = await fetch(storeUrl, {
-      headers: { "user-agent": "Mozilla/5.0 (LaunchCopilot importer)" },
-    });
-    const html = await res.text();
+    // Play has no public lookup API, so we read the listing page. It is heavy
+    // and geo/consent sensitive, so: real browser UA, forced locale, and a
+    // hard timeout — otherwise the browser just reports "Load failed".
+    const pageUrl = new URL(storeUrl);
+    if (!pageUrl.searchParams.get("hl")) pageUrl.searchParams.set("hl", "en");
+    if (!pageUrl.searchParams.get("gl")) pageUrl.searchParams.set("gl", "US");
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    let html;
+    try {
+      const res = await fetch(pageUrl.toString(), {
+        signal: controller.signal,
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+          "accept-language": "en-US,en;q=0.9",
+          accept: "text/html,application/xhtml+xml",
+        },
+      });
+      if (!res.ok) {
+        throw new Error(`Google Play returned ${res.status} for that link.`);
+      }
+      html = await res.text();
+    } catch (e) {
+      if (e.name === "AbortError") {
+        throw new Error("Google Play took too long to respond. Try again, or paste the App Store link.");
+      }
+      throw new Error(`Couldn't reach Google Play: ${e.message}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+
     const meta = (prop) => {
-      const m = html.match(
-        new RegExp(`<meta[^>]+property="${prop}"[^>]+content="([^"]*)"`, "i")
-      ) || html.match(new RegExp(`<meta[^>]+content="([^"]*)"[^>]+property="${prop}"`, "i"));
-      return m ? m[1] : "";
+      const m =
+        html.match(new RegExp(`<meta[^>]+property="${prop}"[^>]+content="([^"]*)"`, "i")) ||
+        html.match(new RegExp(`<meta[^>]+content="([^"]*)"[^>]+property="${prop}"`, "i")) ||
+        html.match(new RegExp(`<meta[^>]+name="${prop}"[^>]+content="([^"]*)"`, "i"));
+      return m ? decodeEntities(m[1]) : "";
     };
-    const rawTitle = meta("og:title");
-    if (!rawTitle) throw new Error("Couldn't read that Play Store page. Check the link.");
-    const genreMatch = html.match(/itemprop="genre"[^>]*>([^<]+)</i);
+
+    // og:title is the reliable one, but fall back to <title> and itemprop.
+    let rawTitle =
+      meta("og:title") ||
+      (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? "") ||
+      (html.match(/itemprop="name"[^>]*>\s*<[^>]*>([^<]+)</i)?.[1] ?? "");
+    rawTitle = decodeEntities(rawTitle).trim();
+    if (!rawTitle) {
+      throw new Error(
+        "Couldn't read that Play Store listing (Google may have served a consent page). Paste the App Store link, or add the app manually."
+      );
+    }
+
+    const genre =
+      html.match(/itemprop="genre"[^>]*>([^<]+)</i)?.[1] ||
+      html.match(/"applicationCategory"\s*:\s*"([^"]+)"/i)?.[1] ||
+      "";
+
+    // Play embeds screenshots as play-lh.googleusercontent.com URLs.
+    const shots = [...new Set(
+      (html.match(/https:\/\/play-lh\.googleusercontent\.com\/[A-Za-z0-9_\-]+/g) || [])
+    )].slice(0, 3);
+
+    const ogImage = meta("og:image");
     return {
-      name: rawTitle.replace(/\s*[-–]\s*(Apps|Applications) on Google Play.*$/i, "").trim(),
-      description: meta("og:description"),
-      category: genreMatch ? genreMatch[1].trim() : "Other",
-      screenshots: meta("og:image") ? [meta("og:image")] : [],
-      store_link: storeUrl,
+      name: rawTitle
+        .replace(/\s*[-–—]\s*(Apps|Applications|Games)?\s*on Google Play.*$/i, "")
+        .replace(/\s*[-–—]\s*Google Play.*$/i, "")
+        .trim(),
+      description: meta("og:description") || meta("description"),
+      category: genre.trim() || "Other",
+      screenshots: shots.length ? shots : ogImage ? [ogImage] : [],
+      store_link: pageUrl.toString(),
     };
   }
 
